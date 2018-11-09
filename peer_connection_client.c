@@ -4,11 +4,13 @@
 #include <pj/sock.h>
 #include <assert.h>
 #include <defaults.h>
+#include <string.h>
 
 //should be in header file
 
 #define MAX_CLIENT_NAME_LEN 512
 #define MAX_ONCONNECT_DATA_LEN  2048
+#define MAX_CONTROL_DATA_LEN 2048
 
 typedef enum State {
   NOT_CONNECTED,
@@ -35,6 +37,7 @@ typedef struct signaling_client {
   pj_sock_t sock;
   int my_id;
   char onconnect_data[MAX_ONCONNECT_DATA_LEN];
+  char control_data[MAX_CONTROL_DATA_LEN];
   sc_observer_callback *callback;
 } signaling_client;
 //should be in header file
@@ -109,8 +112,9 @@ void SignalingClient_OnConnect(signaling_client *SC)
 {
   if (SC->onconnect_data == NULL || strlen(SC->onconnect_data) == 0)
     return;
+  int len = strlen(SC->onconnect_data);
   pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data,
-                                    strlen(SC->onconnect_data), 0);
+                                    &len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
@@ -146,9 +150,9 @@ pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
   memset(SC->onconnect_data, 0x0, sizeof(SC->onconnect_data));
   strcpy(SC->onconnect_data, headers);
   strcat(SC->onconnect_data, message);
-
+  int len = strlen(SC->onconnect_data);
   pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data, 
-                                    strlen(SC->onconnect_data), 0);
+                                    &len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
@@ -182,9 +186,9 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
     
     memset(SC->onconnect_data, 0x0, sizeof(SC->onconnect_data));
     strcpy(SC->onconnect_data, buffer, strlen(buffer));
-    
+    int len = strlen(SC->onconnect_data);
     pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data, 
-                                    strlen(SC->onconnect_data), 0);
+                                      &len, 0);
     if (status != PJ_SUCCESS) {
       printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
       return PJ_FALSE;
@@ -200,7 +204,17 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
   return PJ_TRUE;  
 }
 
-void SignalingClient_Close(signaling_client *SC)
+signaling_client* SignalingClient_Create()
+{
+  signaling_client* SC;
+  SC = (signaling_client*)malloc(sizeof(signaling_client));
+  memset(SC, 0x0, sizeof(signaling_client));
+  SC->my_id = -1;
+  SC->state = NOT_CONNECTED;
+  return SC;
+}
+
+void SignalingClient_Close(signaling_client* SC)
 {
   if (SC == NULL)
     return;
@@ -212,14 +226,11 @@ void SignalingClient_Close(signaling_client *SC)
 
 void SignalingClient_OnHangingGetConnect(signaling_client *SC) 
 {
-  if (!SC)
-    return;
-
   char buffer[1024];
   snprintf(buffer, sizeof(buffer), "GET /wait?peer_id=%i HTTP/1.0\r\n\r\n",
            SC->my_id);
   int len = strlen(buffer);
-  pj_status_t status = pj_sock_send(SC->sock, buffer, len, 0);
+  pj_status_t status = pj_sock_send(SC->sock, buffer, &len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
@@ -245,14 +256,175 @@ pj_bool_t SignalingClient_GetHeaderValue( signaling_client *SC,
                                           int data_len,
                                           int eoh,
                                           const char* header_pattern,
-                                          int header_pattern_len,
                                           int* value) 
 {
-  RTC_DCHECK(value != NULL);
-  size_t found = data.find(header_pattern);
-  if (found != std::string::npos && found < eoh) {
+  int found = strstr(data, header_pattern);
+  if (found != '\0' && found < eoh) {
     *value = atoi(&data[found + strlen(header_pattern)]);
-    return true;
+    return PJ_TRUE;
   }
-  return false;
+  return PJ_FALSE;
+}
+
+pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
+                                          const char* data,
+                                          int data_len,
+                                          int eoh,
+                                          const char* header_pattern,
+                                          char* value) 
+{
+  int found = strstr(data, header_pattern);
+  if (found != '\0' && found < eoh) {
+    int begin = found + strlen(header_pattern);
+    int end = strstr(data + begin, "\r\n");
+    if (end == '\0')
+      end = eoh;
+    memcpy(value, data + begin, end - begin);
+    return PJ_TRUE;
+  }
+  return PJ_FALSE;
+}
+
+pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
+                                         char* data,
+                                         int data_len,
+                                         int* content_length) 
+{
+  //if (!data || !SC || !content_length)
+    //return;
+  pj_status_t status;
+  char buffer[0xffff];
+  int buffer_len = sizeof(buffer);
+
+  do {
+    status = pj_sock_recv(SC->sock, buffer, &buffer_len, 0);
+    if (status != PJ_SUCCESS)
+      break;
+    if (data_len > strlen(data) + buffer_len)
+      memcpy(data + strlen(data), buffer, buffer_len);
+    else
+      printf("%s buffer len is too long!\n", __FUNCTION__);
+  } while (PJ_TRUE);
+
+  pj_bool_t ret = PJ_FALSE;
+  int i = strstr(data, "\r\n\r\n");
+  if (i != '\0') {
+    printf("(INFO) << Headers received\n");
+    if (GetHeaderValue(*data, i, "\r\nContent-Length: ", content_length)) {
+      int total_response_size = (i + 4) + *content_length;
+      if (strlen(data) >= total_response_size) {
+        ret = PJ_TRUE;
+        char should_close[10] = {0};
+        const char kConnection[] = "\r\nConnection: ";
+        if (GetHeaderValue(*data, i, kConnection, &should_close) &&
+            strncmp(should_close, "close", 5) == 0) {
+          SignalingClient_Close(SC);
+          // Since we closed the socket, there was no notification delivered
+          // to us.  Compensate by letting ourselves know.
+        }
+      } else {
+        // We haven't received everything.  Just continue to accept data.
+      }
+    } else {
+      printf("(LS_ERROR) << No content length field specified by the server.\n");
+    }
+  }
+  return ret;
+}
+
+int SignalingClient_GetResponseStatus(const char* response) {
+  int status = -1;
+  if (!response)
+    return status;
+  int pos = strstr(response, ' ');
+  if (pos != '\0')
+    status = atoi(&response[pos + 1]);
+  return status;
+}
+
+pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC, 
+                                              const char* response,
+                                              int content_length,
+                                              int* peer_id,
+                                              int* eoh) 
+{
+  int status = GetResponseStatus(response);
+  if (status != 200) {
+    printf("(LS_ERROR) << Received error from server\n");
+    Close();
+    SC->callback->OnDisconnected();
+    return PJ_FALSE;
+  }
+
+  *eoh = strstr(response, "\r\n\r\n");
+  RTC_DCHECK(*eoh != '\0');
+  if (*eoh == '\0')
+    return PJ_FALSE;
+
+  *peer_id = -1;
+
+  // See comment in peer_channel.cc for why we use the Pragma header and
+  // not e.g. "X-Peer-Id".
+  GetHeaderValue(response, *eoh, "\r\nPragma: ", peer_id);
+  return PJ_TRUE;
+}
+
+void SignalingClient_OnRead(signaling_client *SC) 
+{
+  int content_length = 0;
+  if (ReadIntoBuffer(SC->sock, SC->control_data, &content_length)) {
+    int peer_id = 0, eoh = 0;
+    pj_bool_t ok =
+        ParseServerResponse(SC->control_data, content_length, &peer_id, &eoh);
+    if (ok) {
+      if (SC->my_id == -1) {
+        // First response.  Let's store our server assigned ID.
+        if (SC->state != SIGNING_IN) {
+          printf("ERROR: state is not signing in \n");
+          return;
+        }
+          
+        SC->my_id = peer_id;
+        if (SC->my_id == -1) {
+          return;
+        }
+          
+        // The body of the response will be a list of already connected peers.
+        if (content_length) {
+          int pos = eoh + 4;
+          while (pos < strlen(SC->control_data)) {
+            int eol = strstr((char*)(SC->control_data) + pos, '\n');
+            if (eol == '\0')
+              break;
+            int id = 0;
+            char name[MAX_CLIENT_NAME_LEN];
+            pj_bool_t connected;
+            char sub_control_data[1024];
+            memcpy(sub_control_data, (char*)SC->control_data + pos, eol - pos);
+            if (ParseEntry(sub_control_data, &name, &id,&connected) && 
+                id != SC->my_id) {
+              peers[id] = name;
+              callback_->OnPeerConnected(id, name);
+            }
+            pos = eol + 1;
+          }
+        }
+        RTC_DCHECK(is_connected());
+        callback_->OnSignedIn();
+      } else if (state_ == SIGNING_OUT) {
+        Close();
+        callback_->OnDisconnected();
+      } else if (state_ == SIGNING_OUT_WAITING) {
+        SignOut();
+      }
+    }
+
+    control_data_.clear();
+
+    if (state_ == SIGNING_IN) {
+      RTC_DCHECK(hanging_get_->GetState() == rtc::Socket::CS_CLOSED);
+      state_ = CONNECTED;
+      hanging_get_->Connect(server_address_);
+    }
+  }
 }
