@@ -11,6 +11,8 @@
 #define MAX_CLIENT_NAME_LEN 512
 #define MAX_ONCONNECT_DATA_LEN  2048
 #define MAX_CONTROL_DATA_LEN 2048
+#define MAX_NOTIFY_DATA_LEN 2048
+#define MAX_PEERS_NUMBER  5
 
 typedef enum State {
   NOT_CONNECTED,
@@ -31,6 +33,10 @@ typedef struct signaling_client_observer_callback {
   void (*OnServerConnectionFailure)(void);
 } sc_observer_callback;
 
+struct peers {
+  int id;
+  char name[MAX_CLIENT_NAME_LEN];
+};
 typedef struct signaling_client {
   State state;
   pj_sockaddr_in saddr; //server address info
@@ -39,6 +45,8 @@ typedef struct signaling_client {
   char onconnect_data[MAX_ONCONNECT_DATA_LEN];
   char control_data[MAX_CONTROL_DATA_LEN];
   sc_observer_callback *callback;
+  struct peers peers[MAX_PEERS_NUMBER];
+  char notification_data[MAX_NOTIFY_DATA_LEN]
 } signaling_client;
 //should be in header file
 
@@ -48,6 +56,49 @@ const char kByeMessage[] = "BYE";
 const int kReconnectDelay = 2000;
 
 signaling_client SignalingClient = {0};
+
+signaling_client* SignalingClient_Create()
+{
+  signaling_client* SC;
+  SC = (signaling_client*)malloc(sizeof(signaling_client));
+  memset(SC, 0x0, sizeof(signaling_client));
+  SC->my_id = -1;
+  SC->state = NOT_CONNECTED;
+  for (int i =0; i < MAX_PEERS_NUMBER; ++i)
+    SC->peers[i].id = -1;
+  return SC;
+}
+
+void SignalingClient_Close(signaling_client* SC)
+{
+  if (SC == NULL)
+    return;
+  SignalingClient_SocketClose(SC->sock);
+  memset(SC, 0x0, sizeof(signaling_client));
+  SC->my_id = -1;
+  SC->state = NOT_CONNECTED;
+  for (int i =0; i < MAX_PEERS_NUMBER; ++i)
+    SC->peers[i].id = -1;
+}
+
+int SignalingClient_AllocPeer(signaling_client* SC)
+{
+  for (int i =0; i < MAX_PEERS_NUMBER; ++i)
+    if (SC->peers[i].id == -1)
+      return i;
+  return -1; 
+}
+
+pj_status_t SignalingClient_DestroyPeer(signaling_client* SC, int peer_id)
+{
+  for (int i =0; i < MAX_PEERS_NUMBER; ++i)
+    if (SC->peers[i].id == peer_id) {
+      SC->peers[i].id = -1;
+      memset(SC->peers[i].name, 0x0, sizeof(SC->peers[i].name));
+      return PJ_TRUE;
+    }
+  return PJ_FALSE;
+}
 
 pj_bool_t SignalingClient_is_connected(signaling_client *SC)
 {
@@ -83,13 +134,12 @@ void SignalingClient_SocketClose(pj_sock_t sock) {
 }
 
 int SignalingClient_DoConnect(signaling_client *SC,
-                            const pj_sockaddr_in* server,  
-                            const char* client_name)
+                              pj_sockaddr_in* server)
 {
   pj_status_t status = PJ_FALSE;
 
-  if (NULL == server || NULL == client_name || SC == NULL) {
-    printf("(ERROR) nothing in server or client_name is null or SC is null\n");
+  if (NULL == server || SC == NULL) {
+    printf("(ERROR) nothing in server is null or SC is null\n");
     return;
   }
 
@@ -105,6 +155,7 @@ int SignalingClient_DoConnect(signaling_client *SC,
   status = pj_sock_connect(SC->sock, &SC->saddr, sizeof(SC->saddr));
   if (status != PJ_SUCCESS)
     return PJ_FALSE;
+  SC->state = CONNECTED;
   return status;
 }
 
@@ -204,25 +255,6 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
   return PJ_TRUE;  
 }
 
-signaling_client* SignalingClient_Create()
-{
-  signaling_client* SC;
-  SC = (signaling_client*)malloc(sizeof(signaling_client));
-  memset(SC, 0x0, sizeof(signaling_client));
-  SC->my_id = -1;
-  SC->state = NOT_CONNECTED;
-  return SC;
-}
-
-void SignalingClient_Close(signaling_client* SC)
-{
-  if (SC == NULL)
-    return;
-  SignalingClient_SocketClose(SC->sock);
-  memset(SC, 0x0, sizeof(signaling_client));
-  SC->my_id = -1;
-  SC->state = NOT_CONNECTED;
-}
 
 void SignalingClient_OnHangingGetConnect(signaling_client *SC) 
 {
@@ -357,7 +389,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
   }
 
   *eoh = strstr(response, "\r\n\r\n");
-  RTC_DCHECK(*eoh != '\0');
+  assert(*eoh != '\0');
   if (*eoh == '\0')
     return PJ_FALSE;
 
@@ -399,32 +431,120 @@ void SignalingClient_OnRead(signaling_client *SC)
             int id = 0;
             char name[MAX_CLIENT_NAME_LEN];
             pj_bool_t connected;
-            char sub_control_data[1024];
+            char sub_control_data[1024] = {0};
             memcpy(sub_control_data, (char*)SC->control_data + pos, eol - pos);
             if (ParseEntry(sub_control_data, &name, &id,&connected) && 
                 id != SC->my_id) {
-              peers[id] = name;
-              callback_->OnPeerConnected(id, name);
+              int index = SignalingClient_AllocPeer(SC);
+              if (index != -1) {
+                SC->peers[index].id = id;
+                strcpy(SC->peers[index].name, name);
+              } else {
+                printf("%s ERROR: alloc peer failed. peer_id %d peer_name %s\n", 
+                            __FUNCTION__, id, name);
+                return; 
+              }
+
+              SC->callback->OnPeerConnected(id, name, strlen(name));
             }
             pos = eol + 1;
           }
         }
-        RTC_DCHECK(is_connected());
-        callback_->OnSignedIn();
-      } else if (state_ == SIGNING_OUT) {
+        assert(is_connected());
+        SC->callback->OnSignedIn();
+      } else if (SC->state == SIGNING_OUT) {
         Close();
-        callback_->OnDisconnected();
-      } else if (state_ == SIGNING_OUT_WAITING) {
+        SC->callback->OnDisconnected();
+      } else if (SC->state == SIGNING_OUT_WAITING) {
         SignOut();
       }
     }
+    memset(SC->control_data, 0x0, sizeof(SC->control_data));
 
-    control_data_.clear();
+    if (SC->state == SIGNING_IN) {
+      SignalingClient_DoConnect(SC, &SC->saddr);
+    } 
+  }
+}
 
-    if (state_ == SIGNING_IN) {
-      RTC_DCHECK(hanging_get_->GetState() == rtc::Socket::CS_CLOSED);
-      state_ = CONNECTED;
-      hanging_get_->Connect(server_address_);
+void SignalingClient_OnHangingGetRead(signaling_client *SC,
+                                      pj_sock_t socket) 
+{
+  printf("%s (INFO)", __FUNCTION__);
+  int content_length = 0;
+  if (ReadIntoBuffer(socket, &SC->notification_data, &content_length)) {
+    int peer_id = 0, eoh = 0;
+    pj_bool_t ok =
+        ParseServerResponse(&SC->notification_data, content_length, &peer_id, &eoh);
+
+    if (ok) {
+      // Store the position where the body begins.
+      int pos = eoh + 4;
+
+      if (SC->my_id == peer_id) {
+        // A notification about a new member or a member that just
+        // disconnected.
+        int id = 0;
+        char name[MAX_CLIENT_NAME_LEN];
+        pj_bool_t connected = PJ_FALSE;
+        if (SignalingClient_ParseEntry((char*)SC->notification_data + pos, &name, &id,
+                       &connected)) {
+          if (connected) {
+            int index = SignalingClient_AllocPeer(SC);
+            if (index != -1) {
+              SC->peers[index].id = id;
+              strcpy(SC->peers[index].name, name);
+            } else {
+                printf("%s ERROR: alloc peer failed. peer_id %d peer_name %s\n", 
+                            __FUNCTION__, id, name);
+                return; 
+            }
+
+
+            SC->callback->OnPeerConnected(id, name, strlen(name));
+          } else {
+            SignalingClient_DestroyPeer(SC, id);
+            SC->callback->OnPeerDisconnected(id);
+          }
+        }
+      } else {
+        char sub_control_data[1024] = {0};
+        memcpy(sub_control_data, (char*)SC->notification_data + pos, sizeof(sub_control_data) - 1);
+        SignalingClient_OnMessageFromPeer(SC, peer_id, 
+                                          sub_control_data, strlen(sub_control_data));
+      }
+    }
+
+    memset(SC->notification_data, 0x0, sizeof(SC->notification_data));
+  }
+
+  if (SC->state == NOT_CONNECTED) {
+    SignalingClient_DoConnect(SC, &SC->saddr);
+  }
+}
+
+pj_bool_t SignalingClient_ParseEntry( const char* entry,
+                                      char* name,
+                                      int* id,
+                                      pj_bool_t* connected) {
+  assert(name != NULL);
+  assert(id != NULL);
+  assert(connected != NULL);
+  assert(!entry);
+
+  *connected = PJ_FALSE;
+  int separator = strstr(entry, ',');
+  if (separator != '\0') {
+    *id = atoi(&entry[separator + 1]);
+    memcpy(name, entry, separator);
+    separator = strstr(entry + separator + 1, ',');
+    if (separator != '\0') {
+      *connected = atoi(&entry[separator + 1]) ? PJ_TRUE : PJ_FALSE;
     }
   }
+  return strlen(name) ? PJ_TRUE : PJ_FALSE;
+}
+
+void SignalingClient_OnClose(signaling_client *SC, int err) {
+  printf("(INFO) %s\n", __FUNCTION__);
 }
