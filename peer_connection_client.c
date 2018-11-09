@@ -1,54 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pjlib.h>
-#include <pj/sock.h>
 #include <assert.h>
 #include <defaults.h>
 #include <string.h>
 
-//should be in header file
+#include "peer_connection_client.h"
 
-#define MAX_CLIENT_NAME_LEN 512
-#define MAX_ONCONNECT_DATA_LEN  2048
-#define MAX_CONTROL_DATA_LEN 2048
-#define MAX_NOTIFY_DATA_LEN 2048
-#define MAX_PEERS_NUMBER  5
-
-typedef enum State {
-  NOT_CONNECTED,
-  RESOLVING,
-  SIGNING_IN,
-  CONNECTED,
-  SIGNING_OUT_WAITING,
-  SIGNING_OUT,
-}State;
-
-typedef struct signaling_client_observer_callback {
-  void (*OnSignedIn)(void);  // Called when we're logged on.
-  void (*OnDisconnected)(void);
-  void (*OnPeerConnected)(int id, const char* name, int name_len);
-  void (*OnPeerDisconnected)(int peer_id);
-  void (*OnMessageFromPeer)(int peer_id, const char* message, int msg_len);
-  void (*OnMessageSent)(int err);
-  void (*OnServerConnectionFailure)(void);
-} sc_observer_callback;
-
-struct peers {
-  int id;
-  char name[MAX_CLIENT_NAME_LEN];
-};
-typedef struct signaling_client {
-  State state;
-  pj_sockaddr_in saddr; //server address info
-  pj_sock_t sock;
-  int my_id;
-  char onconnect_data[MAX_ONCONNECT_DATA_LEN];
-  char control_data[MAX_CONTROL_DATA_LEN];
-  sc_observer_callback *callback;
-  struct peers peers[MAX_PEERS_NUMBER];
-  char notification_data[MAX_NOTIFY_DATA_LEN]
-} signaling_client;
-//should be in header file
 
 // This is our magical hangup signal.
 const char kByeMessage[] = "BYE";

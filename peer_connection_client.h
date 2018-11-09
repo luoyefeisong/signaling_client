@@ -11,116 +11,122 @@
 #ifndef SIGNALING_CLIENT_PEER_CONNECTION_CLIENT_H_
 #define SIGNALING_CLIENT_PEER_CONNECTION_CLIENT_H_
 
-#include <map>
-#include <memory>
-#include <string>
+#include <pjlib.h>
+#include <pj/sock.h>
 
-typedef std::map<int, std::string> Peers;
 
-struct PeerConnectionClientObserver {
-  virtual void OnSignedIn() = 0;  // Called when we're logged on.
-  virtual void OnDisconnected() = 0;
-  virtual void OnPeerConnected(int id, const std::string& name) = 0;
-  virtual void OnPeerDisconnected(int peer_id) = 0;
-  virtual void OnMessageFromPeer(int peer_id, const std::string& message) = 0;
-  virtual void OnMessageSent(int err) = 0;
-  virtual void OnServerConnectionFailure() = 0;
+#define MAX_CLIENT_NAME_LEN 512
+#define MAX_ONCONNECT_DATA_LEN  2048
+#define MAX_CONTROL_DATA_LEN 2048
+#define MAX_NOTIFY_DATA_LEN 2048
+#define MAX_PEERS_NUMBER  5
 
- protected:
-  virtual ~PeerConnectionClientObserver() {}
+typedef enum State {
+  NOT_CONNECTED,
+  RESOLVING,
+  SIGNING_IN,
+  CONNECTED,
+  SIGNING_OUT_WAITING,
+  SIGNING_OUT,
+}State;
+
+typedef struct signaling_client_observer_callback {
+  void (*OnSignedIn)(void);  // Called when we're logged on.
+  void (*OnDisconnected)(void);
+  void (*OnPeerConnected)(int id, const char* name, int name_len);
+  void (*OnPeerDisconnected)(int peer_id);
+  void (*OnMessageFromPeer)(int peer_id, const char* message, int msg_len);
+  void (*OnMessageSent)(int err);
+  void (*OnServerConnectionFailure)(void);
+} sc_observer_callback;
+
+struct peers {
+  int id;
+  char name[MAX_CLIENT_NAME_LEN];
 };
+typedef struct signaling_client {
+  State state;
+  pj_sockaddr_in saddr; //server address info
+  pj_sock_t sock;
+  int my_id;
+  char onconnect_data[MAX_ONCONNECT_DATA_LEN];
+  char control_data[MAX_CONTROL_DATA_LEN];
+  sc_observer_callback *callback;
+  struct peers peers[MAX_PEERS_NUMBER];
+  char notification_data[MAX_NOTIFY_DATA_LEN];
+} signaling_client;
 
-class PeerConnectionClient {
- public:
-  enum State {
-    NOT_CONNECTED,
-    RESOLVING,
-    SIGNING_IN,
-    CONNECTED,
-    SIGNING_OUT_WAITING,
-    SIGNING_OUT,
-  };
+signaling_client* SignalingClient_Create();
+void SignalingClient_Close(signaling_client* SC);
 
-  PeerConnectionClient();
-  ~PeerConnectionClient();
+pj_sock_t SignalingClient_SocketCreate(signaling_client *SC); 
+void SignalingClient_SocketClose(pj_sock_t sock);
 
-  int id() const;
-  bool is_connected() const;
-  const Peers& peers() const;
+int SignalingClient_AllocPeer(signaling_client* SC);
+pj_status_t SignalingClient_DestroyPeer(signaling_client* SC, int peer_id);
 
-  void RegisterObserver(PeerConnectionClientObserver* callback);
+int SignalingClient_DoConnect(signaling_client *SC,
+                              pj_sockaddr_in* server);
+void SignalingClient_OnConnect(signaling_client *SC) ;
 
-  void Connect(const std::string& server,
-               int port,
-               const std::string& client_name);
+pj_bool_t SignalingClient_is_connected(signaling_client *SC);
 
-  bool SendToPeer(int peer_id, const std::string& message);
-  bool SendHangUp(int peer_id);
-  bool IsSendingMessage();
+void SignalingClient_RegisterObserver(signaling_client *SC,
+                                      sc_observer_callback* callback);
 
-  bool SignOut();
+pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
+                                      int peer_id, 
+                                      const char* message,
+                                      int message_len);
 
-  // implements the MessageHandler interface
-  void OnMessage(rtc::Message* msg);
+void SignalingClient_OnMessageFromPeer(signaling_client *SC,
+                                       int peer_id,
+                                       const char* message,
+                                       int msg_len);                                      
 
- protected:
-  void DoConnect();
-  void Close();
-  void InitSocketSignals();
-  bool ConnectControlSocket();
-  void OnConnect(rtc::AsyncSocket* socket);
-  void OnHangingGetConnect(AsyncSocket* socket);
-  void OnMessageFromPeer(int peer_id, const std::string& message);
+pj_bool_t SignalingClient_SendHangUp(signaling_client *SC, int peer_id);
 
-  // Quick and dirty support for parsing HTTP header values.
-  bool GetHeaderValue(const std::string& data,
-                      size_t eoh,
-                      const char* header_pattern,
-                      size_t* value);
+pj_bool_t SignalingClient_SignOut(signaling_client *SC);
 
-  bool GetHeaderValue(const std::string& data,
-                      size_t eoh,
-                      const char* header_pattern,
-                      std::string* value);
+void SignalingClient_OnHangingGetConnect(signaling_client *SC);
 
-  // Returns true if the whole response has been read.
-  bool ReadIntoBuffer(rtc::AsyncSocket* socket,
-                      std::string* data,
-                      size_t* content_length);
+pj_bool_t SignalingClient_GetHeaderValue( signaling_client *SC,
+                                          const char* data,
+                                          int data_len,
+                                          int eoh,
+                                          const char* header_pattern,
+                                          int* value); 
 
-  void OnRead(rtc::AsyncSocket* socket);
+pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
+                                          const char* data,
+                                          int data_len,
+                                          int eoh,
+                                          const char* header_pattern,
+                                          char* value);
 
-  void OnHangingGetRead(rtc::AsyncSocket* socket);
 
-  // Parses a single line entry in the form "<name>,<id>,<connected>"
-  bool ParseEntry(const std::string& entry,
-                  std::string* name,
-                  int* id,
-                  bool* connected);
+pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
+                                         char* data,
+                                         int data_len,
+                                         int* content_length) ;
 
-  int GetResponseStatus(const std::string& response);
+int SignalingClient_GetResponseStatus(const char* response);
 
-  bool ParseServerResponse(const std::string& response,
-                           size_t content_length,
-                           size_t* peer_id,
-                           size_t* eoh);
+pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC, 
+                                              const char* response,
+                                              int content_length,
+                                              int* peer_id,
+                                              int* eoh);
 
-  void OnClose(rtc::AsyncSocket* socket, int err);
+void SignalingClient_OnRead(signaling_client *SC);                                              
+void SignalingClient_OnHangingGetRead(signaling_client *SC,
+                                      pj_sock_t socket);
 
-  void OnResolveResult(rtc::AsyncResolverInterface* resolver);
+pj_bool_t SignalingClient_ParseEntry( const char* entry,
+                                      char* name,
+                                      int* id,
+                                      pj_bool_t* connected);
 
-  PeerConnectionClientObserver* callback_;
-  rtc::SocketAddress server_address_;
-  rtc::AsyncResolver* resolver_;
-  std::unique_ptr<rtc::AsyncSocket> control_socket_;
-  std::unique_ptr<rtc::AsyncSocket> hanging_get_;
-  std::string onconnect_data_;
-  std::string control_data_;
-  std::string notification_data_;
-  std::string client_name_;
-  Peers peers_;
-  State state_;
-  int my_id_;
-};
+void SignalingClient_OnClose(signaling_client *SC, int err);
 
 #endif  // SIGNALING_CLIENT_PEER_CONNECTION_CLIENT_H_
