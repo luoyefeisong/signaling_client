@@ -7,6 +7,16 @@
 #define SERVER_ADDR "132.232.3.109"
 #define SERVER_PORT 8888
 
+#define POOL_SIZE 10240
+
+static struct app_t
+{
+	/* Our global variables */
+	pj_caching_pool cp;
+	pj_pool_t *pool;
+	pj_thread_t *thread;
+}app;
+
 int main()
 {
   /* Initialize the libraries before anything else */
@@ -30,4 +40,12 @@ int main()
   Conductor_StartLogin(SC, &server);
 
   SignalingClient_Destroy(SC);
+}
+
+void main_loop()
+{
+	pj_caching_pool cp
+	pj_caching_pool_init(&icedemo.cp, NULL, 0);
+	// Create pool.
+	pool = pj_pool_create(mem, NULL, POOL_SIZE, 4000, NULL);
 }
