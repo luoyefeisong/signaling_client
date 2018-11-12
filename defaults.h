@@ -13,17 +13,16 @@
 
 #include <stdint.h>
 
-#include <string>
-
 extern const char kAudioLabel[];
 extern const char kVideoLabel[];
 extern const char kStreamId[];
-extern const uint16_t kDefaultServerPort;
+extern const unsigned short kDefaultServerPort;
 
-std::string GetEnvVarOrDefault(const char* env_var_name,
-                               const char* default_value);
-std::string GetPeerConnectionString();
-std::string GetDefaultServerName();
-std::string GetPeerName();
+void GetEnvVarOrDefault(char* value,
+                        const char* env_var_name,
+                        const char* default_value);
+void GetPeerName(char*);
+
+int FindSubStr(const char *haystack, const char *needle);
 
 #endif  // EXAMPLES_PEERCONNECTION_CLIENT_DEFAULTS_H_

@@ -15,6 +15,8 @@
 
 #ifdef _WIN32
 #include <winsock2.h>
+#pragma comment(lib, "Ws2_32.lib")
+#pragma warning(disable : 4996)
 #else
 #include <unistd.h>
 #endif
@@ -24,37 +26,54 @@
 const char kAudioLabel[] = "audio_label";
 const char kVideoLabel[] = "video_label";
 const char kStreamId[] = "stream_id";
-const uint16_t kDefaultServerPort = 8888;
+const unsigned short kDefaultServerPort = 8888;
 
-std::string GetEnvVarOrDefault(const char* env_var_name,
-                               const char* default_value) {
-  std::string value;
+
+void GetEnvVarOrDefault( char* value,
+                         const char* env_var_name,
+                         const char* default_value) {
   const char* env_var = getenv(env_var_name);
   if (env_var)
-    value = env_var;
+    strcpy(value, env_var);
 
-  if (value.empty())
-    value = default_value;
+  if (*value == 0)
+    strcpy(value, default_value);
 
-  return value;
+  return;
 }
-
+/*
 std::string GetPeerConnectionString() {
   return GetEnvVarOrDefault("WEBRTC_CONNECT", "stun:stun.l.google.com:19302");
 }
 
 std::string GetDefaultServerName() {
-  return GetEnvVarOrDefault("WEBRTC_SERVER", "localhost");
+  return GetEnvVarOrDefault("SIGNALING_SERVER", "localhost");
+}
+*/
+
+void GetPeerName(char* name) {
+  char computer_name[256] = {0};
+  char value[256] = {0};
+  GetEnvVarOrDefault(value, "USERNAME", "user");
+  strncpy(name, value, strlen(value));
+
+  name[strlen(name)] = '@';
+  
+  if (gethostname(computer_name, ARRAYSIZE(computer_name)) == 0) {
+    strcat(name, computer_name);
+  } else {
+    strcat(name, "host");
+  }
+  return;
 }
 
-std::string GetPeerName() {
-  char computer_name[256];
-  std::string ret(GetEnvVarOrDefault("USERNAME", "user"));
-  ret += '@';
-  if (gethostname(computer_name, ARRAYSIZE(computer_name)) == 0) {
-    ret += computer_name;
-  } else {
-    ret += "host";
-  }
-  return ret;
+
+int FindSubStr(const char *haystack, const char *needle)
+{
+	char *subStr = strstr(haystack, needle);
+	if (subStr == NULL)
+		return 0;
+	else
+		return haystack - subStr;
+
 }

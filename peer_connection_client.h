@@ -54,20 +54,26 @@ typedef struct signaling_client {
   sc_observer_callback *callback;
   struct peers peers[MAX_PEERS_NUMBER];
   char notification_data[MAX_NOTIFY_DATA_LEN];
+  char client_name[MAX_CLIENT_NAME_LEN];
 } signaling_client;
 
 signaling_client* SignalingClient_Create();
+void SignalingClient_Destroy(signaling_client* SC);
 void SignalingClient_Close(signaling_client* SC);
 
 pj_sock_t SignalingClient_SocketCreate(signaling_client *SC); 
-void SignalingClient_SocketClose(pj_sock_t sock);
+void SignalingClient_SocketClose(signaling_client* SC);
 
 int SignalingClient_AllocPeer(signaling_client* SC);
+
 pj_status_t SignalingClient_DestroyPeer(signaling_client* SC, int peer_id);
 
-int SignalingClient_DoConnect(signaling_client *SC,
+int SignalingClient_Connect(signaling_client *SC,
                               pj_sockaddr_in* server);
-void SignalingClient_OnConnect(signaling_client *SC) ;
+
+void SignalingClient_DoConnect(signaling_client *SC);
+
+void SignalingClient_OnConnect(signaling_client *SC);
 
 pj_bool_t SignalingClient_is_connected(signaling_client *SC);
 
@@ -88,7 +94,7 @@ pj_bool_t SignalingClient_SendHangUp(signaling_client *SC, int peer_id);
 
 pj_bool_t SignalingClient_SignOut(signaling_client *SC);
 
-void SignalingClient_OnHangingGetConnect(signaling_client *SC);
+pj_bool_t SignalingClient_OnHangingGetConnect(signaling_client *SC);
 
 pj_bool_t SignalingClient_GetHeaderValue( signaling_client *SC,
                                           const char* data,
