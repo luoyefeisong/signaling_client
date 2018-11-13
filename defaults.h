@@ -12,6 +12,18 @@
 #define EXAMPLES_PEERCONNECTION_CLIENT_DEFAULTS_H_
 
 #include <stdint.h>
+#include <pjlib.h>
+typedef struct app_t
+{
+	/* Our global variables */
+	pj_caching_pool cp;
+	pj_pool_t *pool;
+	pj_thread_t *thread;
+  pj_ioqueue_t *ioqueue;
+  pj_ioqueue_key_t *key;
+}app_t;
+
+extern app_t app;
 
 extern const char kAudioLabel[];
 extern const char kVideoLabel[];

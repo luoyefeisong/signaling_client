@@ -46,6 +46,7 @@ struct peers {
 };
 typedef struct signaling_client {
   State state;
+  pj_bool_t is_connected;
   pj_sockaddr_in saddr; //server address info
   pj_sock_t sock;
   int my_id;

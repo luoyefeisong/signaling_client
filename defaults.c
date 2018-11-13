@@ -21,7 +21,7 @@
 #include <unistd.h>
 #endif
 
-
+app_t app = {0};
 
 const char kAudioLabel[] = "audio_label";
 const char kVideoLabel[] = "video_label";
@@ -74,6 +74,6 @@ int FindSubStr(const char *haystack, const char *needle)
 	if (subStr == NULL)
 		return 0;
 	else
-		return haystack - subStr;
+		return subStr - haystack;
 
 }

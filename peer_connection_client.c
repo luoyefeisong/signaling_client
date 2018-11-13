@@ -3,9 +3,34 @@
 #include <assert.h>
 #include "defaults.h"
 #include <string.h>
+#include <pjlib.h>
 
 #include "peer_connection_client.h"
 
+extern app_t app;
+
+
+static void on_ioqueue_hanging_read(pj_ioqueue_key_t *key, 
+                            pj_ioqueue_op_key_t *op_key,
+                            pj_ssize_t bytes_read)
+{
+  pj_status_t rc = 0;
+  signaling_client* SC = NULL;
+  SC = (signaling_client*)pj_ioqueue_get_user_data(key);
+  if (!SC) {
+    printf("%s get userdata failed !\n", __FUNCTION__);
+  }
+
+  SignalingClient_OnHangingGetRead(SC, SC->sock);
+}
+
+static pj_ioqueue_callback hanging_cb = 
+{
+    &on_ioqueue_hanging_read,
+    NULL,
+    NULL,
+    NULL,
+};
 
 // This is our magical hangup signal.
 const char kByeMessage[] = "BYE";
@@ -40,7 +65,7 @@ void SignalingClient_Close(signaling_client* SC)
 {
   if (SC == NULL)
     return;
-  SignalingClient_SocketClose(SC->sock);
+  SignalingClient_SocketClose(SC);
   memset(SC, 0x0, sizeof(signaling_client));
   SC->my_id = -1;
   SC->state = NOT_CONNECTED;
@@ -92,13 +117,16 @@ pj_sock_t SignalingClient_SocketCreate(signaling_client *SC)
     printf("%s create sock error!\n", __FUNCTION__);
     return PJ_INVALID_SOCKET;
   }
+
   SC->sock = sock;
   return sock;
 }
 
-void SignalingClient_SocketClose(signaling_client* SC) {
+void SignalingClient_SocketClose(signaling_client* SC) 
+{
   pj_sock_close(SC->sock);
   SC->sock = PJ_INVALID_SOCKET;
+  SC->is_connected = PJ_FALSE;
 }
 
 int SignalingClient_Connect(signaling_client *SC,
@@ -111,7 +139,7 @@ int SignalingClient_Connect(signaling_client *SC,
     return PJ_FALSE;
   }
 
-  if (SC->state != NOT_CONNECTED) {
+  if (SC->is_connected == PJ_TRUE) {
     printf("(WARNING) The client must not be connected before you can call Connect()\n");
     return PJ_FALSE;
   }
@@ -119,7 +147,7 @@ int SignalingClient_Connect(signaling_client *SC,
   memcpy(&SC->saddr, server, sizeof(SC->saddr));
   if (SC->saddr.sin_port == 0 )
     SC->saddr.sin_port = kDefaultServerPort;
-  SC->saddr.sin_port = pj_htons(SC->saddr.sin_port);
+  //SC->saddr.sin_port = pj_htons(SC->saddr.sin_port);
   GetPeerName(SC->client_name);
 
   status = pj_sock_connect(SC->sock, &SC->saddr, sizeof(SC->saddr));
@@ -127,8 +155,7 @@ int SignalingClient_Connect(signaling_client *SC,
     return PJ_FALSE;
   else
   {
-    SignalingClient_DoConnect(SC);
-    SignalingClient_OnConnect(SC);
+    SC->is_connected = PJ_TRUE;
   }
        
   return status;
@@ -149,12 +176,13 @@ void SignalingClient_OnConnect(signaling_client *SC)
   int len = strlen(SC->onconnect_data);
   pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data,
                                     &len, 0);
-  if (status != PJ_SUCCESS) {
+  if (status != PJ_SUCCESS ) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return;
   }
   memset(SC->onconnect_data, 0x0, sizeof(SC->onconnect_data));
 
+  SignalingClient_OnRead(SC);
 }
 
 pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
@@ -242,13 +270,20 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
 
 pj_bool_t SignalingClient_OnHangingGetConnect(signaling_client *SC) 
 {
+  pj_status_t rc = 0;
   char buffer[1024];
   snprintf(buffer, sizeof(buffer), "GET /wait?peer_id=%i HTTP/1.0\r\n\r\n",
            SC->my_id);
   int len = strlen(buffer);
+
   pj_status_t status = pj_sock_send(SC->sock, buffer, &len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
+    return PJ_FALSE;
+  }
+  rc = pj_ioqueue_register_sock(app.pool, app.ioqueue, SC->sock, NULL, &hanging_cb, &app.key);
+  if (rc != PJ_SUCCESS) {
+    printf("%s register sock failed !\n", __FUNCTION__);
     return PJ_FALSE;
   }
   return PJ_TRUE;
@@ -292,7 +327,7 @@ pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
   int found = FindSubStr(data, header_pattern);
   if (found != '\0' && found < eoh) {
     int begin = found + strlen(header_pattern);
-    int end = FindSubStr(data + begin, "\r\n");
+    int end = FindSubStr(data + begin, "\r\n") + begin;
     if (end == '\0')
       end = eoh;
     memcpy(value, data + begin, end - begin);
@@ -334,7 +369,7 @@ pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
         const char kConnection[] = "\r\nConnection: ";
         if (SignalingClient_GetHeaderValueStr(SC, data, data_len, i, kConnection, should_close) &&
             strncmp(should_close, "close", 5) == 0) {
-          SignalingClient_Close(SC);
+          SignalingClient_SocketClose(SC);
           // Since we closed the socket, there was no notification delivered
           // to us.  Compensate by letting ourselves know.
         }
@@ -367,8 +402,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
   int status = SignalingClient_GetResponseStatus(response);
   if (status != 200) {
     printf("(LS_ERROR) << Received error from server\n");
-	SignalingClient_Close(SC);
-    SC->callback->OnDisconnected();
+	  SignalingClient_Close(SC);
     return PJ_FALSE;
   }
 
@@ -388,7 +422,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
 void SignalingClient_OnRead(signaling_client *SC) 
 {
   int content_length = 0;
-  if (SignalingClient_ReadIntoBuffer(SC, SC->control_data, strlen(SC->control_data), &content_length)) {
+  if (SignalingClient_ReadIntoBuffer(SC, SC->control_data, sizeof(SC->control_data), &content_length)) {
     int peer_id = 0, eoh = 0;
     pj_bool_t ok =
 		SignalingClient_ParseServerResponse(SC, SC->control_data, content_length, &peer_id, &eoh);
@@ -409,7 +443,7 @@ void SignalingClient_OnRead(signaling_client *SC)
         if (content_length) {
           int pos = eoh + 4;
           while (pos < (int)strlen(SC->control_data)) {
-            int eol = FindSubStr((char*)(SC->control_data) + pos, "\n");
+            int eol = FindSubStr((char*)(SC->control_data) + pos, "\n") + pos;
             if (eol == '\0')
               break;
             int id = 0;
@@ -429,24 +463,27 @@ void SignalingClient_OnRead(signaling_client *SC)
                 return; 
               }
 
-              SC->callback->OnPeerConnected(id, name, strlen(name));
+              //SC->callback->OnPeerConnected(id, name, strlen(name));
             }
             pos = eol + 1;
           }
         }
         assert(SignalingClient_is_connected(SC));
-        SC->callback->OnSignedIn();
+        //SC->callback->OnSignedIn();
       } else if (SC->state == SIGNING_OUT) {
-		  SignalingClient_Close(SC);
-        SC->callback->OnDisconnected();
+		    SignalingClient_Close(SC);
       } else if (SC->state == SIGNING_OUT_WAITING) {
-		  SignalingClient_SignOut(SC);
+		    SignalingClient_SignOut(SC);
       }
     }
     memset(SC->control_data, 0x0, sizeof(SC->control_data));
 
     if (SC->state == SIGNING_IN) {
-      SignalingClient_DoConnect(SC);
+	    SC->state = CONNECTED;
+      SignalingClient_SocketCreate(SC);
+      SignalingClient_Connect(SC, &SC->saddr);
+      SignalingClient_OnHangingGetConnect(SC);
+
     } 
   }
 }
@@ -485,10 +522,11 @@ void SignalingClient_OnHangingGetRead(signaling_client *SC,
             }
 
 
-            SC->callback->OnPeerConnected(id, name, strlen(name));
+            //SC->callback->OnPeerConnected(id, name, strlen(name));
           } else {
             SignalingClient_DestroyPeer(SC, id);
-            SC->callback->OnPeerDisconnected(id);
+            //SC->callback->OnPeerDisconnected(id);
+
           }
         }
       } else {
@@ -502,8 +540,9 @@ void SignalingClient_OnHangingGetRead(signaling_client *SC,
     memset(SC->notification_data, 0x0, sizeof(SC->notification_data));
   }
 
-  if (SC->state == NOT_CONNECTED) {
-    SignalingClient_DoConnect(SC);
+  if (SC->is_connected == NOT_CONNECTED) {
+	  SignalingClient_SocketCreate(SC);
+	  SignalingClient_Connect(SC, &SC->saddr);
   }
 }
 
@@ -514,14 +553,14 @@ pj_bool_t SignalingClient_ParseEntry( const char* entry,
   assert(name != NULL);
   assert(id != NULL);
   assert(connected != NULL);
-  assert(!entry);
+  assert(entry);
 
   *connected = PJ_FALSE;
   int separator = FindSubStr(entry, ",");
   if (separator != '\0') {
     *id = atoi(&entry[separator + 1]);
     memcpy(name, entry, separator);
-    separator = FindSubStr(entry + separator + 1, ",");
+    separator = FindSubStr(entry + separator + 1, ",") + separator + 1;
     if (separator != '\0') {
       *connected = atoi(&entry[separator + 1]) ? PJ_TRUE : PJ_FALSE;
     }

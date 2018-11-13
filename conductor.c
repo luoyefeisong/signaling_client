@@ -13,4 +13,7 @@ void Conductor_StartLogin(signaling_client* SC,
   if (SignalingClient_is_connected(SC))
     return;
   SignalingClient_Connect(SC, server);
+  SignalingClient_DoConnect(SC);
+  SignalingClient_OnConnect(SC);
+
 }
