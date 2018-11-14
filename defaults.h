@@ -20,7 +20,8 @@ typedef struct app_t
 	pj_pool_t *pool;
 	pj_thread_t *thread;
   pj_ioqueue_t *ioqueue;
-  pj_ioqueue_key_t *key;
+  pj_ioqueue_key_t *key;       //for hanging get
+  pj_ioqueue_op_key_t op_key;  //for hanging get
 }app_t;
 
 extern app_t app;

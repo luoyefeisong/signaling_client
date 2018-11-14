@@ -15,11 +15,9 @@
 #include <pj/sock.h>
 
 
-#define MAX_CLIENT_NAME_LEN 512
-#define MAX_ONCONNECT_DATA_LEN  2048
-#define MAX_CONTROL_DATA_LEN 2048
-#define MAX_NOTIFY_DATA_LEN 2048
-#define MAX_PEERS_NUMBER  5
+#define MAX_CLIENT_NAME_LEN 128
+#define MAX_BUFFER_LEN 2048
+#define MAX_PEERS_NUMBER  500
 
 typedef enum State {
   NOT_CONNECTED,
@@ -50,11 +48,14 @@ typedef struct signaling_client {
   pj_sockaddr_in saddr; //server address info
   pj_sock_t sock;
   int my_id;
-  char onconnect_data[MAX_ONCONNECT_DATA_LEN];
-  char control_data[MAX_CONTROL_DATA_LEN];
+  char onconnect_data[MAX_BUFFER_LEN];
+  char control_data[MAX_BUFFER_LEN];
+  pj_ssize_t control_data_len;
+  char notification_data[MAX_BUFFER_LEN];
+  pj_ssize_t notification_data_len;
+  char buffer[MAX_BUFFER_LEN];
   sc_observer_callback *callback;
   struct peers peers[MAX_PEERS_NUMBER];
-  char notification_data[MAX_NOTIFY_DATA_LEN];
   char client_name[MAX_CLIENT_NAME_LEN];
 } signaling_client;
 
@@ -95,7 +96,7 @@ pj_bool_t SignalingClient_SendHangUp(signaling_client *SC, int peer_id);
 
 pj_bool_t SignalingClient_SignOut(signaling_client *SC);
 
-pj_bool_t SignalingClient_OnHangingGetConnect(signaling_client *SC);
+pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC);
 
 pj_bool_t SignalingClient_GetHeaderValue( signaling_client *SC,
                                           const char* data,
@@ -115,7 +116,7 @@ pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
 pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
                                          char* data,
                                          int data_len,
-                                         int* content_length) ;
+                                         int* content_length); 
 
 int SignalingClient_GetResponseStatus(const char* response);
 
@@ -126,8 +127,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
                                               int* eoh);
 
 void SignalingClient_OnRead(signaling_client *SC);                                              
-void SignalingClient_OnHangingGetRead(signaling_client *SC,
-                                      pj_sock_t socket);
+void SignalingClient_OnHangingGetRead(signaling_client *SC);
 
 pj_bool_t SignalingClient_ParseEntry( const char* entry,
                                       char* name,

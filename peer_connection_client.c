@@ -10,23 +10,54 @@
 extern app_t app;
 
 
-static void on_ioqueue_hanging_read(pj_ioqueue_key_t *key, 
+static void on_hanging_read_complete(pj_ioqueue_key_t *key, 
                             pj_ioqueue_op_key_t *op_key,
                             pj_ssize_t bytes_read)
 {
   pj_status_t rc = 0;
   signaling_client* SC = NULL;
+
   SC = (signaling_client*)pj_ioqueue_get_user_data(key);
   if (!SC) {
     printf("%s get userdata failed !\n", __FUNCTION__);
   }
 
-  SignalingClient_OnHangingGetRead(SC, SC->sock);
+  if (bytes_read < 0) {
+    char errmsg[PJ_ERR_MSG_SIZE];
+
+    rc = (pj_status_t)-bytes_read;
+    pj_strerror(rc, errmsg, sizeof(errmsg));
+    printf("%s read error: %s\n", __FUNCTION__, errmsg);
+
+	  goto read_next_packet;
+  } else if (bytes_read = 0) {
+    goto read_next_packet;
+  } else {
+    SC->notification_data_len = bytes_read;
+    SignalingClient_OnHangingGetRead(SC);
+
+  }
+  return;
+
+read_next_packet:
+  
+  rc = pj_ioqueue_recv(app.key, &app.op_key, 
+                      SC->notification_data, &SC->notification_data_len,
+                      PJ_IOQUEUE_ALWAYS_ASYNC);
+
+  if (rc != PJ_EPENDING && rc != PJ_ECANCELLED) {
+    char errmsg[PJ_ERR_MSG_SIZE];
+
+    printf("%s ioqueue read error: %s\n", __FUNCTION__, errmsg);
+
+    pj_assert(!"Unhandled error");
+  }
+
 }
 
 static pj_ioqueue_callback hanging_cb = 
 {
-    &on_ioqueue_hanging_read,
+    &on_hanging_read_complete,
     NULL,
     NULL,
     NULL,
@@ -124,6 +155,9 @@ pj_sock_t SignalingClient_SocketCreate(signaling_client *SC)
 
 void SignalingClient_SocketClose(signaling_client* SC) 
 {
+  if (app.key) {
+    pj_ioqueue_unregister(app.key);
+  }
   pj_sock_close(SC->sock);
   SC->sock = PJ_INVALID_SOCKET;
   SC->is_connected = PJ_FALSE;
@@ -268,7 +302,7 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
 }
 
 
-pj_bool_t SignalingClient_OnHangingGetConnect(signaling_client *SC) 
+pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC) 
 {
   pj_status_t rc = 0;
   char buffer[1024];
@@ -281,11 +315,24 @@ pj_bool_t SignalingClient_OnHangingGetConnect(signaling_client *SC)
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
   }
-  rc = pj_ioqueue_register_sock(app.pool, app.ioqueue, SC->sock, NULL, &hanging_cb, &app.key);
+
+  rc = pj_ioqueue_register_sock(app.pool, app.ioqueue, SC->sock, SC, &hanging_cb, &app.key);
   if (rc != PJ_SUCCESS) {
     printf("%s register sock failed !\n", __FUNCTION__);
     return PJ_FALSE;
   }
+
+  SC->notification_data_len = sizeof(SC->notification_data);
+  rc = pj_ioqueue_recv( app.key, &app.op_key, 
+                                    SC->notification_data, &SC->notification_data_len,
+                                    PJ_IOQUEUE_ALWAYS_ASYNC);
+
+  if (rc != PJ_EPENDING && rc != PJ_ECANCELLED) {
+    char errmsg[PJ_ERR_MSG_SIZE];
+    printf("%s ioqueue read error: %s\n", __FUNCTION__, errmsg);
+    pj_assert(!"Unhandled error");
+  }
+
   return PJ_TRUE;
 }
 
@@ -339,23 +386,12 @@ pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
 pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
                                          char* data,
                                          int data_len,
-                                         int* content_length) 
+                                         int* content_length)
+ 
 {
   //if (!data || !SC || !content_length)
     //return;
   pj_status_t status;
-  char buffer[0xffff];
-  int buffer_len = sizeof(buffer);
-
-  do {
-    status = pj_sock_recv(SC->sock, buffer, &buffer_len, 0);
-    if (status != PJ_SUCCESS)
-      break;
-    if (data_len > (int)strlen(data) + buffer_len)
-      memcpy(data + strlen(data), buffer, buffer_len);
-    else
-      printf("%s buffer len is too long!\n", __FUNCTION__);
-  } while (PJ_TRUE);
 
   pj_bool_t ret = PJ_FALSE;
   int i = FindSubStr(data, "\r\n\r\n");
@@ -422,6 +458,15 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
 void SignalingClient_OnRead(signaling_client *SC) 
 {
   int content_length = 0;
+  pj_status_t status = 0;
+
+  SC->control_data_len = sizeof(SC->control_data);
+  do {
+    status = pj_sock_recv(SC->sock, SC->control_data, &SC->control_data_len, 0);
+    if (status == PJ_SUCCESS)
+      break;
+  } while (PJ_TRUE);
+
   if (SignalingClient_ReadIntoBuffer(SC, SC->control_data, sizeof(SC->control_data), &content_length)) {
     int peer_id = 0, eoh = 0;
     pj_bool_t ok =
@@ -477,23 +522,22 @@ void SignalingClient_OnRead(signaling_client *SC)
       }
     }
     memset(SC->control_data, 0x0, sizeof(SC->control_data));
-
+	SC->control_data_len = 0;
     if (SC->state == SIGNING_IN) {
 	    SC->state = CONNECTED;
       SignalingClient_SocketCreate(SC);
       SignalingClient_Connect(SC, &SC->saddr);
-      SignalingClient_OnHangingGetConnect(SC);
-
+      SignalingClient_OnHangingGetConnectAndRecv(SC);
     } 
   }
 }
 
-void SignalingClient_OnHangingGetRead(signaling_client *SC,
-                                      pj_sock_t socket) 
+void SignalingClient_OnHangingGetRead(signaling_client *SC) 
 {
   printf("%s (INFO)", __FUNCTION__);
   int content_length = 0;
-  if (SignalingClient_ReadIntoBuffer(SC, SC->notification_data, sizeof(SC->notification_data), &content_length)) {
+  if (SignalingClient_ReadIntoBuffer(SC, SC->notification_data, 
+                                      SC->notification_data_len, &content_length)) {
     int peer_id = 0, eoh = 0;
     pj_bool_t ok =
 		SignalingClient_ParseServerResponse(SC, SC->notification_data, content_length, &peer_id, &eoh);
@@ -520,13 +564,10 @@ void SignalingClient_OnHangingGetRead(signaling_client *SC,
                             __FUNCTION__, id, name);
                 return; 
             }
-
-
             //SC->callback->OnPeerConnected(id, name, strlen(name));
           } else {
             SignalingClient_DestroyPeer(SC, id);
             //SC->callback->OnPeerDisconnected(id);
-
           }
         }
       } else {
@@ -543,6 +584,7 @@ void SignalingClient_OnHangingGetRead(signaling_client *SC,
   if (SC->is_connected == NOT_CONNECTED) {
 	  SignalingClient_SocketCreate(SC);
 	  SignalingClient_Connect(SC, &SC->saddr);
+    SignalingClient_OnHangingGetConnectAndRecv(SC);
   }
 }
 
