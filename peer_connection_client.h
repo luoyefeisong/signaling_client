@@ -19,7 +19,7 @@
 #define MAX_BUFFER_LEN 2048
 #define MAX_PEERS_NUMBER  500
 
-#define SDP_FLAG "sdp info\n"
+#define SDP_FLAG "sdp info"
 
 typedef enum State {
   NOT_CONNECTED,

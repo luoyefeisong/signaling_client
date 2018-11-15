@@ -389,6 +389,7 @@ pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC)
   return PJ_TRUE;
 }
 
+extern void icedemo_input_remote_sdp(char* buffer_in, int buffer_len);
 void SignalingClient_OnMessageFromPeer(signaling_client *SC,
                                        int peer_id,
                                        const char* message,
@@ -398,7 +399,7 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
       strncmp(message, kByeMessage, sizeof(kByeMessage) - 1) == 0) {
     SignalingClient_DestroyPeer(SC, peer_id);
   } else {
-    assert(SC->my_id == peer_id );
+    assert(SC->my_id != peer_id );
     assert(message && msg_len);
 
     if (-1 != SignalingClient_FindPeer(SC, peer_id)) {
@@ -408,7 +409,8 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
         return;
       } else {
         memset(g_sdp_remote_buffer, 0x0, sizeof(g_sdp_remote_buffer));
-        memcpy(g_sdp_remote_buffer, message + sizeof(SDP_FLAG), msg_len - sizeof(SDP_FLAG));        
+        memcpy(g_sdp_remote_buffer, message + sizeof(SDP_FLAG) , msg_len - sizeof(SDP_FLAG));  
+		icedemo_input_remote_sdp(g_sdp_remote_buffer, strlen(g_sdp_remote_buffer));
       }
     } else {
       printf("(WARNING) << Received a message from unknown peer while already in a "
