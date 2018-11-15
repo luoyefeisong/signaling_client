@@ -19,6 +19,8 @@
 #define MAX_BUFFER_LEN 2048
 #define MAX_PEERS_NUMBER  500
 
+#define SDP_FLAG "sdp info\n"
+
 typedef enum State {
   NOT_CONNECTED,
   RESOLVING,
@@ -45,8 +47,10 @@ struct peers {
 typedef struct signaling_client {
   State state;
   pj_bool_t is_connected;
+  pj_bool_t is_connected_get;  //used for http get wait
   pj_sockaddr_in saddr; //server address info
   pj_sock_t sock;
+  pj_sock_t sock_get;   //used for http get wait
   int my_id;
   char onconnect_data[MAX_BUFFER_LEN];
   char control_data[MAX_BUFFER_LEN];
@@ -59,23 +63,31 @@ typedef struct signaling_client {
   char client_name[MAX_CLIENT_NAME_LEN];
 } signaling_client;
 
+extern char g_sdp_remote_buffer[4096];
+
 signaling_client* SignalingClient_Create();
 void SignalingClient_Destroy(signaling_client* SC);
 void SignalingClient_Close(signaling_client* SC);
 
-pj_sock_t SignalingClient_SocketCreate(signaling_client *SC); 
-void SignalingClient_SocketClose(signaling_client* SC);
+pj_sock_t SignalingClient_SocketCreate(signaling_client *SC, pj_bool_t is_get); 
+
+void SignalingClient_SocketClose(signaling_client* SC, pj_sock_t socket) ;
 
 int SignalingClient_AllocPeer(signaling_client* SC);
 
 pj_status_t SignalingClient_DestroyPeer(signaling_client* SC, int peer_id);
 
+int SignalingClient_FindPeer(signaling_client* SC, int peer_id);
+
+int SignalingClient_GetPeerByName(signaling_client *SC, pj_str_t* name);
+
 int SignalingClient_Connect(signaling_client *SC,
-                              pj_sockaddr_in* server);
+                            pj_sockaddr_in* server,
+                            pj_sock_t socket);
 
 void SignalingClient_DoConnect(signaling_client *SC);
 
-void SignalingClient_OnConnect(signaling_client *SC);
+void SignalingClient_OnConnect(signaling_client *SC, pj_sock_t socket);
 
 pj_bool_t SignalingClient_is_connected(signaling_client *SC);
 
@@ -114,6 +126,7 @@ pj_bool_t SignalingClient_GetHeaderValueStr( signaling_client *SC,
 
 
 pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
+                                         pj_sock_t socket,
                                          char* data,
                                          int data_len,
                                          int* content_length); 

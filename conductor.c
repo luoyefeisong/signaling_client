@@ -5,16 +5,16 @@ void Conductor_StartLogin(signaling_client* SC,
                           pj_sockaddr_in* server)
 {
   pj_sock_t socket;
-  socket = SignalingClient_SocketCreate(SC);
+  socket = SignalingClient_SocketCreate(SC, PJ_FALSE);
   if (PJ_INVALID_SOCKET == socket )
   {
     return;
   }
   if (SignalingClient_is_connected(SC))
     return;
-  SignalingClient_Connect(SC, server);
+  SignalingClient_Connect(SC, server, socket);
   SignalingClient_DoConnect(SC);
-  SignalingClient_OnConnect(SC);
+  SignalingClient_OnConnect(SC, socket);
 
 }
 

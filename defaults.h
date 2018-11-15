@@ -13,7 +13,7 @@
 
 #include <stdint.h>
 #include <pjlib.h>
-typedef struct app_t
+typedef struct global_app_t
 {
 	/* Our global variables */
 	pj_caching_pool cp;
@@ -22,9 +22,9 @@ typedef struct app_t
   pj_ioqueue_t *ioqueue;
   pj_ioqueue_key_t *key;       //for hanging get
   pj_ioqueue_op_key_t op_key;  //for hanging get
-}app_t;
+}global_app_t;
 
-extern app_t app;
+extern global_app_t app;
 
 extern const char kAudioLabel[];
 extern const char kVideoLabel[];

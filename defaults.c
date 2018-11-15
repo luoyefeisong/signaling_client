@@ -21,7 +21,7 @@
 #include <unistd.h>
 #endif
 
-app_t app = {0};
+global_app_t app = {0};
 
 const char kAudioLabel[] = "audio_label";
 const char kVideoLabel[] = "video_label";
@@ -70,9 +70,9 @@ void GetPeerName(char* name) {
 
 int FindSubStr(const char *haystack, const char *needle)
 {
-	char *subStr = strstr(haystack, needle);
+	const char *subStr = strstr(haystack, needle);
 	if (subStr == NULL)
-		return 0;
+		return -1;
 	else
 		return subStr - haystack;
 
