@@ -307,6 +307,7 @@ pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
   }
+  SC->peer_id_to_be_connect = -1;
   return PJ_SUCCESS;
 }
 
@@ -408,9 +409,10 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
         printf("recv msg, but not sdp information. peer_id %d return\n", peer_id);
         return;
       } else {
+        SC->peer_id_to_be_connect = peer_id;
         memset(g_sdp_remote_buffer, 0x0, sizeof(g_sdp_remote_buffer));
         memcpy(g_sdp_remote_buffer, message + sizeof(SDP_FLAG) , msg_len - sizeof(SDP_FLAG));  
-		icedemo_input_remote_sdp(g_sdp_remote_buffer, strlen(g_sdp_remote_buffer));
+		    icedemo_input_remote_sdp(g_sdp_remote_buffer, strlen(g_sdp_remote_buffer));
       }
     } else {
       printf("(WARNING) << Received a message from unknown peer while already in a "

@@ -52,6 +52,7 @@ typedef struct signaling_client {
   pj_sock_t sock;
   pj_sock_t sock_get;   //used for http get wait
   int my_id;
+  int peer_id_to_be_connect;  
   char onconnect_data[MAX_BUFFER_LEN];
   char control_data[MAX_BUFFER_LEN];
   pj_ssize_t control_data_len;
