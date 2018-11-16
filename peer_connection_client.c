@@ -30,7 +30,7 @@ static void on_hanging_read_complete(pj_ioqueue_key_t *key,
     printf("%s read error: %s\n", __FUNCTION__, errmsg);
 
 	  goto read_next_packet;
-  } else if (bytes_read = 0) {
+  } else if (bytes_read == 0) {
     goto read_next_packet;
   } else {
     SC->notification_data_len = bytes_read;
