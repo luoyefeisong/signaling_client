@@ -13,13 +13,22 @@
 
 #include <pjlib.h>
 #include <pj/sock.h>
-
+#include <pjlib-util.h>
+#include <pjnath.h>
 
 #define MAX_CLIENT_NAME_LEN 128
 #define MAX_BUFFER_LEN 2048
 #define MAX_PEERS_NUMBER  500
 
 #define SDP_FLAG "sdp info"
+
+typedef struct list_node
+{
+    PJ_DECL_LIST_MEMBER(struct list_node);
+    char buffer[MAX_BUFFER_LEN];
+    int peer_id;
+} list_node;
+
 
 typedef enum State {
   NOT_CONNECTED,
@@ -51,8 +60,8 @@ typedef struct signaling_client {
   pj_sockaddr_in saddr; //server address info
   pj_sock_t sock;
   pj_sock_t sock_get;   //used for http get wait
+  int if_register;
   int my_id;
-  int peer_id_to_be_connect;  
   char onconnect_data[MAX_BUFFER_LEN];
   char control_data[MAX_BUFFER_LEN];
   pj_ssize_t control_data_len;
@@ -64,7 +73,55 @@ typedef struct signaling_client {
   char client_name[MAX_CLIENT_NAME_LEN];
 } signaling_client;
 
+typedef struct app_t
+{
+	/* Command line options are stored here */
+	struct options
+	{
+		unsigned comp_cnt;
+		pj_str_t ns;
+		int max_host;
+		pj_bool_t regular;
+		pj_str_t stun_srv;
+		pj_str_t turn_srv;
+		pj_bool_t turn_tcp;
+		pj_str_t turn_username;
+		pj_str_t turn_password;
+		pj_bool_t turn_fingerprint;
+		const char *log_file;
+	} opt;
+
+	/* Our global variables */
+	pj_caching_pool cp;
+	pj_pool_t *pool;
+	pj_thread_t *thread;
+	pj_bool_t thread_quit_flag;
+	pj_ice_strans_cfg ice_cfg;
+	pj_ice_strans *icest;
+	FILE *log_fhnd;
+
+	/* Variables to store parsed remote ICE info */
+	struct rem_info
+	{
+		char ufrag[80];
+		char pwd[80];
+		unsigned comp_cnt;
+		pj_sockaddr def_addr[PJ_ICE_MAX_COMP];
+		unsigned cand_cnt;
+		pj_ice_sess_cand cand[PJ_ICE_ST_MAX_CAND];
+	} rem;
+	signaling_client* SC;
+	pj_bool_t in_nego;
+	list_node list;
+	list_node *tail;
+  pj_bool_t need_pop_msg;
+  pj_mutex_t* socket_mutex;
+} icedemo_t;
+
+
 extern char g_sdp_remote_buffer[4096];
+extern icedemo_t icedemo;
+extern char g_sdp_buffer[4096];
 
 signaling_client* SignalingClient_Create();
 void SignalingClient_Destroy(signaling_client* SC);
@@ -85,6 +142,8 @@ int SignalingClient_GetPeerByName(signaling_client *SC, pj_str_t* name);
 int SignalingClient_Connect(signaling_client *SC,
                             pj_sockaddr_in* server,
                             pj_sock_t socket);
+
+void SignalingClient_PopMsgAndStartIce();
 
 void SignalingClient_DoConnect(signaling_client *SC);
 
@@ -135,6 +194,7 @@ pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
 int SignalingClient_GetResponseStatus(const char* response);
 
 pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC, 
+                                              pj_sock_t socket,
                                               const char* response,
                                               int content_length,
                                               int* peer_id,

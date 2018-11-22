@@ -4,8 +4,9 @@
 #include "defaults.h"
 #include <string.h>
 #include <pjlib.h>
-
+#include <pj/list.h>
 #include "peer_connection_client.h"
+
 
 extern global_app_t app;
 
@@ -19,7 +20,7 @@ static void on_hanging_read_complete(pj_ioqueue_key_t *key,
 
   SC = (signaling_client*)pj_ioqueue_get_user_data(key);
   if (!SC) {
-    printf("%s get userdata failed !\n", __FUNCTION__);
+    printf("get userdata failed !\n");
   }
 
   if (bytes_read < 0) {
@@ -92,6 +93,7 @@ void SignalingClient_Destroy(signaling_client* SC)
   SC = NULL;
 }
 
+/* �˺������߳����⣬�Ȳ��� */
 void SignalingClient_Close(signaling_client* SC)
 {
   if (SC == NULL)
@@ -176,11 +178,12 @@ pj_sock_t SignalingClient_SocketCreate(signaling_client *SC, pj_bool_t is_get)
   pj_sock_t sock = PJ_INVALID_SOCKET;
   pj_status_t status = pj_sock_socket(pj_AF_INET(), pj_SOCK_STREAM(), 0, &sock);
   if (PJ_SUCCESS != status) {
-    printf("%s create sock error!\n", __FUNCTION__);
     return PJ_INVALID_SOCKET;
   }
-  if (is_get)
+
+  if (is_get) {
     SC->sock_get = sock;
+  }
   else
     SC->sock = sock;
   return sock;
@@ -189,16 +192,18 @@ pj_sock_t SignalingClient_SocketCreate(signaling_client *SC, pj_bool_t is_get)
 void SignalingClient_SocketClose(signaling_client* SC, pj_sock_t socket) 
 {
  
-  pj_sock_close(SC->sock);
+  pj_sock_close(socket);
 
   if (socket == SC->sock) {
     SC->sock = PJ_INVALID_SOCKET;
     SC->is_connected = PJ_FALSE;
   }
-    
-  if (socket == SC->sock_get) {
+
+  if (SC->if_register && socket == SC->sock_get) {
     if (app.key) {
       pj_ioqueue_unregister(app.key);
+      app.key = NULL;
+      SC->if_register = PJ_FALSE;
     }
     SC->sock_get = PJ_INVALID_SOCKET;
     SC->is_connected_get = PJ_FALSE;
@@ -225,7 +230,7 @@ int SignalingClient_Connect(signaling_client *SC,
   memcpy(&SC->saddr, server, sizeof(SC->saddr));
   if (SC->saddr.sin_port == 0 )
     SC->saddr.sin_port = kDefaultServerPort;
-  //SC->saddr.sin_port = pj_htons(SC->saddr.sin_port);
+  
   GetPeerName(SC->client_name);
 
   status = pj_sock_connect(socket, &SC->saddr, sizeof(SC->saddr));
@@ -307,7 +312,9 @@ pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
   }
-  SC->peer_id_to_be_connect = -1;
+
+  SignalingClient_OnRead(SC);
+  
   return PJ_SUCCESS;
 }
 
@@ -369,14 +376,20 @@ pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC)
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
   }
+  if (app.key != NULL)
+    printf("%s key not unregister! socket %d\n", __FUNCTION__, SC->sock_get);
+  
 
   rc = pj_ioqueue_register_sock(app.pool, app.ioqueue, SC->sock_get, SC, &hanging_cb, &app.key);
   if (rc != PJ_SUCCESS) {
     printf("%s register sock failed !\n", __FUNCTION__);
     return PJ_FALSE;
   }
+          
+  SC->if_register = PJ_TRUE;
 
   SC->notification_data_len = sizeof(SC->notification_data);
+
   rc = pj_ioqueue_recv( app.key, &app.op_key, 
                                     SC->notification_data, &SC->notification_data_len,
                                     PJ_IOQUEUE_ALWAYS_ASYNC);
@@ -389,13 +402,74 @@ pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC)
 
   return PJ_TRUE;
 }
-
+extern void icedemo_init_session(unsigned rolechar);
+extern int encode_session_sdp(char *buffer, unsigned maxlen);
 extern void icedemo_input_remote_sdp(char* buffer_in, int buffer_len);
+extern void icedemo_start_nego();
+static void ice_start(const char* message,
+                      int msg_len,
+                      int peer_id)
+{
+  unsigned role = 'c';
+  icedemo.in_nego = PJ_TRUE;
+  icedemo_init_session(role);
+  encode_session_sdp(g_sdp_buffer, sizeof(g_sdp_buffer));
+
+  memset(g_sdp_remote_buffer, 0x0, sizeof(g_sdp_remote_buffer));
+  memcpy(g_sdp_remote_buffer, message + sizeof(SDP_FLAG) , msg_len - sizeof(SDP_FLAG)); 
+  icedemo_input_remote_sdp(g_sdp_remote_buffer, strlen(g_sdp_remote_buffer));
+
+  SignalingClient_SendToPeer(icedemo.SC, peer_id, g_sdp_buffer, strlen(g_sdp_buffer));
+  icedemo_start_nego();
+}
+
+static void SignalingClient_PushBackNewMsg(const char* message, 
+                                    int msg_len,
+                                    int peer_id)
+{
+  //new message push back
+  list_node* node = (list_node*)malloc(sizeof(list_node));
+  if (node == NULL) {
+    printf("malloc list node failed, exit!!!\n");
+    exit(-1);
+  }
+  memset(node->buffer, 0x0, sizeof(node->buffer));
+  memcpy(node->buffer, message, msg_len);
+  node->peer_id = peer_id;
+
+  pj_list_push_back(icedemo.tail, node);
+  icedemo.tail = node;
+}
+
+void SignalingClient_PopMsgAndStartIce()
+{
+  //pop message if state == idle
+  list_node* head = &icedemo.list;
+  if (icedemo.in_nego == PJ_FALSE) {
+    if (pj_list_empty(head) == PJ_FALSE) {
+      list_node* node_pop = head->next;
+
+      ice_start(node_pop->buffer, strlen(node_pop->buffer), node_pop->peer_id);
+
+      pj_list_erase(node_pop);
+	    free(node_pop);
+      node_pop = NULL;
+
+      if (pj_list_empty(head) == PJ_TRUE)
+        icedemo.tail = head;
+    }
+  }
+}
+
+
 void SignalingClient_OnMessageFromPeer(signaling_client *SC,
                                        int peer_id,
                                        const char* message,
                                        int msg_len) 
 {
+
+  
+
   if (msg_len == (sizeof(kByeMessage) - 1) &&
       strncmp(message, kByeMessage, sizeof(kByeMessage) - 1) == 0) {
     SignalingClient_DestroyPeer(SC, peer_id);
@@ -409,10 +483,11 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
         printf("recv msg, but not sdp information. peer_id %d return\n", peer_id);
         return;
       } else {
-        SC->peer_id_to_be_connect = peer_id;
-        memset(g_sdp_remote_buffer, 0x0, sizeof(g_sdp_remote_buffer));
-        memcpy(g_sdp_remote_buffer, message + sizeof(SDP_FLAG) , msg_len - sizeof(SDP_FLAG));  
-		    icedemo_input_remote_sdp(g_sdp_remote_buffer, strlen(g_sdp_remote_buffer));
+        //fifo, store msg into queue, wait state to idle and start init session and nego
+        pj_mutex_lock(app.pop_mutex);
+        SignalingClient_PushBackNewMsg(message, msg_len, peer_id);
+        SignalingClient_PopMsgAndStartIce();        
+        pj_mutex_unlock(app.pop_mutex);
       }
     } else {
       printf("(WARNING) << Received a message from unknown peer while already in a "
@@ -420,6 +495,12 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
       return;
     }
   }
+  if (SC->state == CONNECTED) {
+    SignalingClient_SocketCreate(SC, PJ_TRUE);
+    SignalingClient_Connect(SC, &SC->saddr, SC->sock_get);
+    SignalingClient_OnHangingGetConnectAndRecv(SC);
+  }
+  return;
 }
 
 pj_bool_t SignalingClient_GetHeaderValue( signaling_client *SC,
@@ -469,8 +550,7 @@ pj_bool_t SignalingClient_ReadIntoBuffer(signaling_client *SC,
 
   pj_bool_t ret = PJ_FALSE;
   int i = FindSubStr(data, "\r\n\r\n");
-  if (i != -1) {
-    printf("(INFO) << Headers received\n");
+  if (i != -1) {   
     if (SignalingClient_GetHeaderValue(SC, data, data_len, i, "\r\nContent-Length: ", content_length)) {
       int total_response_size = (i + 4) + *content_length;
       if ((int)strlen(data) >= total_response_size) {
@@ -503,16 +583,18 @@ int SignalingClient_GetResponseStatus(const char* response) {
   return status;
 }
 
-pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC, 
+pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
+                                              pj_sock_t socket,
                                               const char* response,
                                               int content_length,
                                               int* peer_id,
-                                              int* eoh) 
+                                              int* eoh)
+
 {
   int status = SignalingClient_GetResponseStatus(response);
   if (status != 200) {
     printf("(LS_ERROR) << Received error from server\n");
-	  SignalingClient_Close(SC);
+	  SignalingClient_SocketClose(SC, socket);
     return PJ_FALSE;
   }
 
@@ -545,7 +627,7 @@ void SignalingClient_OnRead(signaling_client *SC)
   if (SignalingClient_ReadIntoBuffer(SC, SC->sock, SC->control_data, sizeof(SC->control_data), &content_length)) {
     int peer_id = 0, eoh = 0;
     pj_bool_t ok =
-		SignalingClient_ParseServerResponse(SC, SC->control_data, content_length, &peer_id, &eoh);
+		SignalingClient_ParseServerResponse(SC, SC->sock, SC->control_data, content_length, &peer_id, &eoh);
     if (ok) {
       if (SC->my_id == -1) {
         // First response.  Let's store our server assigned ID.
@@ -598,7 +680,7 @@ void SignalingClient_OnRead(signaling_client *SC)
       }
     }
     memset(SC->control_data, 0x0, sizeof(SC->control_data));
-	SC->control_data_len = 0;
+	  SC->control_data_len = 0;
     if (SC->state == SIGNING_IN) {
 	    SC->state = CONNECTED;
       SignalingClient_SocketCreate(SC, PJ_TRUE);
@@ -610,13 +692,13 @@ void SignalingClient_OnRead(signaling_client *SC)
 
 void SignalingClient_OnHangingGetRead(signaling_client *SC) 
 {
-  printf("%s (INFO)", __FUNCTION__);
+  //printf("%s (INFO)", __func__);
   int content_length = 0;
   if (SignalingClient_ReadIntoBuffer(SC, SC->sock_get, SC->notification_data, 
                                       SC->notification_data_len, &content_length)) {
     int peer_id = 0, eoh = 0;
     pj_bool_t ok =
-		SignalingClient_ParseServerResponse(SC, SC->notification_data, content_length, &peer_id, &eoh);
+		SignalingClient_ParseServerResponse(SC, SC->sock_get, SC->notification_data, content_length, &peer_id, &eoh);
 
     if (ok) {
       // Store the position where the body begins.
@@ -649,13 +731,14 @@ void SignalingClient_OnHangingGetRead(signaling_client *SC)
         memcpy(sub_control_data, (char*)SC->notification_data + pos, sizeof(sub_control_data) - 1);
         SignalingClient_OnMessageFromPeer(SC, peer_id, 
                                           sub_control_data, strlen(sub_control_data));
+                                           
       }
     }
 
     memset(SC->notification_data, 0x0, sizeof(SC->notification_data));
   }
 
-  if (SC->is_connected == NOT_CONNECTED) {
+  if (SC->is_connected_get == PJ_FALSE) {
 	  SignalingClient_SocketCreate(SC, PJ_TRUE);
 	  SignalingClient_Connect(SC, &SC->saddr, SC->sock_get);
     SignalingClient_OnHangingGetConnectAndRecv(SC);

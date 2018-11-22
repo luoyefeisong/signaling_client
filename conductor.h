@@ -3,7 +3,7 @@
 #define SERVER_ADDR "132.232.3.109"
 #define SERVER_PORT 8888
 
-#define POOL_SIZE 10240
+#define POOL_SIZE 1024000
 
 extern void Conductor_StartLogin(signaling_client* SC, 
 						  pj_sockaddr_in* server);

@@ -22,6 +22,7 @@ typedef struct global_app_t
   pj_ioqueue_t *ioqueue;
   pj_ioqueue_key_t *key;       //for hanging get
   pj_ioqueue_op_key_t op_key;  //for hanging get
+  pj_mutex_t* pop_mutex;
 }global_app_t;
 
 extern global_app_t app;

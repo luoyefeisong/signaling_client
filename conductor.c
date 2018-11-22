@@ -29,8 +29,11 @@ void start_signaling_client(signaling_client* SC)
   server.sin_addr = pj_inet_addr(&str);
   server.sin_family = pj_AF_INET();
   server.sin_port = pj_htons(SERVER_PORT); 
+    
+  
 
   async_handler();
+  pj_mutex_create_recursive(app.pool, "mutex_pop_msg", &app.pop_mutex);
   Conductor_StartLogin(SC, &server);
   //pj_thread_join(app.thread);
   //SignalingClient_Destroy(SC);
@@ -67,7 +70,7 @@ void async_handler()
 	pj_caching_pool_init(&app.cp, NULL, 0);
  	// Create pool.
 	app.pool = pj_pool_create(&app.cp.factory, "signaling client", 
-                            POOL_SIZE, 4000, NULL);
+                            POOL_SIZE, 1024, NULL);
 
   rc = pj_ioqueue_create(app.pool, 64, &app.ioqueue);
   if (rc != PJ_SUCCESS) {
@@ -83,26 +86,18 @@ void async_handler()
   return;
 
 on_error:
-/*
-  if (skey != NULL)
-   	pj_ioqueue_unregister(skey);
-  else if (ssock != PJ_INVALID_SOCKET)
-	  pj_sock_close(ssock);
-    
-  if (ckey1 != NULL)
-   	pj_ioqueue_unregister(ckey1);
-  else if (csock1 != PJ_INVALID_SOCKET)
-	  pj_sock_close(csock1);
-    
-  if (ckey0 != NULL)
-   	pj_ioqueue_unregister(ckey0);
-  else if (csock0 != PJ_INVALID_SOCKET)
-	  pj_sock_close(csock0);
-*/    
-  if (app.ioqueue != NULL)
-	  pj_ioqueue_destroy(app.ioqueue);
+  if (app.key != NULL) {
+   	pj_ioqueue_unregister(app.key);
+    app.key = NULL; 
+  }
 
+  if (app.ioqueue != NULL) {
+	  pj_ioqueue_destroy(app.ioqueue);
+    app.ioqueue = NULL;
+  }
   pj_pool_release(app.pool);
+  app.pool = NULL;
+
   pj_caching_pool_destroy(&app.cp);
   return;  
 }
