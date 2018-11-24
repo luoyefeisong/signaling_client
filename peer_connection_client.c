@@ -405,7 +405,7 @@ pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC)
 extern void icedemo_init_session(unsigned rolechar);
 extern int encode_session_sdp(char *buffer, unsigned maxlen);
 extern void icedemo_input_remote_sdp(char* buffer_in, int buffer_len);
-extern void icedemo_start_nego();
+extern void icedemo_start_nego(); 
 static void ice_start(const char* message,
                       int msg_len,
                       int peer_id)
@@ -445,11 +445,13 @@ void SignalingClient_PopMsgAndStartIce()
 {
   //pop message if state == idle
   list_node* head = &icedemo.list;
-  if (icedemo.in_nego == PJ_FALSE) {
+  if (icedemo.in_nego == PJ_FALSE) {//if nego not complete, and new msg coming, do not pop msg now
     if (pj_list_empty(head) == PJ_FALSE) {
       list_node* node_pop = head->next;
 
+	  pj_mutex_lock(icedemo.socket_mutex);
       ice_start(node_pop->buffer, strlen(node_pop->buffer), node_pop->peer_id);
+	  pj_mutex_unlock(icedemo.socket_mutex);
 
       pj_list_erase(node_pop);
 	    free(node_pop);
@@ -486,7 +488,7 @@ void SignalingClient_OnMessageFromPeer(signaling_client *SC,
         //fifo, store msg into queue, wait state to idle and start init session and nego
         pj_mutex_lock(app.pop_mutex);
         SignalingClient_PushBackNewMsg(message, msg_len, peer_id);
-        SignalingClient_PopMsgAndStartIce();        
+        SignalingClient_PopMsgAndStartIce();
         pj_mutex_unlock(app.pop_mutex);
       }
     } else {
@@ -593,7 +595,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
 {
   int status = SignalingClient_GetResponseStatus(response);
   if (status != 200) {
-    printf("(LS_ERROR) << Received error from server\n");
+    printf("(LS_ERROR) << Received error from server socket %d peer_id %d\n", socket, peer_id);
 	  SignalingClient_SocketClose(SC, socket);
     return PJ_FALSE;
   }

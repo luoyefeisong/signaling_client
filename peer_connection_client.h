@@ -116,6 +116,7 @@ typedef struct app_t
 	list_node *tail;
   pj_bool_t need_pop_msg;
   pj_mutex_t* socket_mutex;
+  void* active_sock_listen;
 } icedemo_t;
 
 

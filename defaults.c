@@ -52,7 +52,9 @@ std::string GetDefaultServerName() {
 */
 
 void GetPeerName(char* name) {
-  char computer_name[256] = {0};
+	strcpy(name, "xueyu@DESKTOP-KRS6PMA");
+  /*
+	char computer_name[256] = {0};
   char value[256] = {0};
   GetEnvVarOrDefault(value, "USERNAME", "user");
   strncpy(name, value, strlen(value));
@@ -64,6 +66,7 @@ void GetPeerName(char* name) {
   } else {
     strcat(name, "host");
   }
+  */
   return;
 }
 
