@@ -113,7 +113,6 @@ typedef struct app_t
 	signaling_client* SC;
 	pj_bool_t in_nego;
 	list_node list;
-	list_node *tail;
   pj_bool_t need_pop_msg;
   pj_mutex_t* socket_mutex;
   void* active_sock_listen;

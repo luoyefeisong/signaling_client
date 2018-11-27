@@ -18,6 +18,8 @@ static void on_hanging_read_complete(pj_ioqueue_key_t *key,
   pj_status_t rc = 0;
   signaling_client* SC = NULL;
 
+  //memset(&app.op_key, 0x0, sizeof(app.op_key));
+
   SC = (signaling_client*)pj_ioqueue_get_user_data(key);
   if (!SC) {
     printf("get userdata failed !\n");
@@ -423,22 +425,35 @@ static void ice_start(const char* message,
   icedemo_start_nego();
 }
 
+static void PrintNodeCount(list_node* head)
+{
+  list_node* next = head->next;
+  int i = 0;
+  while(head != next)
+  {
+    i++;
+    next = next->next;
+  }
+  printf("%s node number %d\n", __func__, i);
+}
+
 static void SignalingClient_PushBackNewMsg(const char* message, 
                                     int msg_len,
                                     int peer_id)
 {
   //new message push back
+  list_node* head = &icedemo.list;
   list_node* node = (list_node*)malloc(sizeof(list_node));
   if (node == NULL) {
     printf("malloc list node failed, exit!!!\n");
     exit(-1);
   }
-  memset(node->buffer, 0x0, sizeof(node->buffer));
+  memset(node, 0x0, sizeof(list_node));
   memcpy(node->buffer, message, msg_len);
   node->peer_id = peer_id;
 
-  pj_list_push_back(icedemo.tail, node);
-  icedemo.tail = node;
+  pj_list_push_back(head->prev, node);
+  PrintNodeCount(head);
 }
 
 void SignalingClient_PopMsgAndStartIce()
@@ -449,16 +464,13 @@ void SignalingClient_PopMsgAndStartIce()
     if (pj_list_empty(head) == PJ_FALSE) {
       list_node* node_pop = head->next;
 
-	  pj_mutex_lock(icedemo.socket_mutex);
+      pj_mutex_lock(icedemo.socket_mutex);
       ice_start(node_pop->buffer, strlen(node_pop->buffer), node_pop->peer_id);
-	  pj_mutex_unlock(icedemo.socket_mutex);
+      pj_mutex_unlock(icedemo.socket_mutex);
 
       pj_list_erase(node_pop);
 	    free(node_pop);
       node_pop = NULL;
-
-      if (pj_list_empty(head) == PJ_TRUE)
-        icedemo.tail = head;
     }
   }
 }
@@ -596,6 +608,7 @@ pj_bool_t SignalingClient_ParseServerResponse(signaling_client *SC,
   int status = SignalingClient_GetResponseStatus(response);
   if (status != 200) {
     printf("(LS_ERROR) << Received error from server socket %d peer_id %d\n", socket, peer_id);
+	if (socket != -1)
 	  SignalingClient_SocketClose(SC, socket);
     return PJ_FALSE;
   }
