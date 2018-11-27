@@ -71,7 +71,7 @@ const char kByeMessage[] = "BYE";
 // Delay between server connection retries, in milliseconds
 const int kReconnectDelay = 2000;
 
-signaling_client SignalingClient = {0};
+signaling_client SignalingClient;
 
 signaling_client* SignalingClient_Create()
 {
@@ -263,7 +263,7 @@ void SignalingClient_OnConnect(signaling_client *SC, pj_sock_t socket)
     return;
   int len = strlen(SC->onconnect_data);
   pj_status_t status = pj_sock_send(socket, SC->onconnect_data,
-                                    &(pj_ssize_t)len, 0);
+                                    (pj_ssize_t*)&len, 0);
   if (status != PJ_SUCCESS ) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return;
@@ -309,7 +309,7 @@ pj_bool_t SignalingClient_SendToPeer( signaling_client *SC,
   strcat(SC->onconnect_data, message);
   int len = strlen(SC->onconnect_data);
   pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data, 
-                                    &(pj_ssize_t)len, 0);
+                                    (pj_ssize_t*)&len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
@@ -348,7 +348,7 @@ pj_bool_t SignalingClient_SignOut(signaling_client *SC)
     strcpy(SC->onconnect_data, buffer);
     int len = strlen(SC->onconnect_data);
     pj_status_t status = pj_sock_send(SC->sock, SC->onconnect_data, 
-                                      &(pj_ssize_t)len, 0);
+                                      (pj_ssize_t*)&len, 0);
     if (status != PJ_SUCCESS) {
       printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
       return PJ_FALSE;
@@ -373,7 +373,7 @@ pj_bool_t SignalingClient_OnHangingGetConnectAndRecv(signaling_client *SC)
            SC->my_id);
   int len = strlen(buffer);
 
-  pj_status_t status = pj_sock_send(SC->sock_get, buffer, &(pj_ssize_t)len, 0);
+  pj_status_t status = pj_sock_send(SC->sock_get, buffer, (pj_ssize_t*)&len, 0);
   if (status != PJ_SUCCESS) {
     printf("%s send to peer failed, error code %d\n", __FUNCTION__, status);
     return PJ_FALSE;
